@@ -22,7 +22,8 @@ env:
 jobs:
   change_detect:
     name: "Detect code changes"
-    runs-on: ubuntu-18.04
+    #runs-on: ubuntu-18.04
+    runs-on: self-hosted
     outputs:
       # this is output as string, see https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idoutputs
       source_modified: ${{ steps.changes.outputs.status_code == '1' }}
@@ -67,7 +68,8 @@ jobs:
     needs: change_detect
     if: ${{ fromJSON(needs.change_detect.outputs.source_modified) }}
     name: ${{ matrix.config.name }}
-    runs-on: ubuntu-18.04
+    #runs-on: ubuntu-18.04
+    runs-on: self-hosted
     container: ghcr.io/${{ needs.change_detect.outputs.docker_repo }}/openfpga-build-${{ matrix.config.cc}}
     # Branch on different OS and settings
     strategy:
@@ -186,7 +188,8 @@ jobs:
             openfpga.sh
   docker_distribution:
     name: Build docker image for distribution
-    runs-on: ubuntu-latest
+    #runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [linux_build, change_detect]
     steps:
       - name: Cancel previous
@@ -222,7 +225,8 @@ jobs:
             ghcr.io/${{ needs.change_detect.outputs.docker_repo }}/openfpga-master:${{ needs.change_detect.outputs.sha_short }}
   linux_regression_tests:
     name: linux_regression_tests
-    runs-on: ubuntu-18.04
+    #runs-on: ubuntu-18.04
+    runs-on: self-hosted
     needs: [linux_build, change_detect]
     container: ghcr.io/${{ needs.change_detect.outputs.docker_repo }}/openfpga-env
     strategy:
