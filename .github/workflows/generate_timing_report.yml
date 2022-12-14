@@ -1,0 +1,109 @@
+name: Timing Report
+
+# Only run for pull requests as we care contribution to the master
+# - There are changes in RTL files
+on:
+  pull_request:
+    path:
+      - ".github/**"
+      - "netlist/**"
+      - "signoff/**"
+      - "Makefile"
+      - "utils/**"
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  detect_arch_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      source_modified: ${{ steps.git-diff-arch.outputs.source_modified }}
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout code
+        uses: actions/checkout@v2.1.0
+
+      - name: Detect architecture/script changes
+        id: git-diff-arch
+        run: |
+          git fetch
+          git diff origin/main HEAD --name-status -- ':.github/**' ':netlist/**' ':signoff/**' 'Makefile' 'utils/**'
+          if git diff origin/main HEAD --name-status --exit-code -- ':.github/**' ':netlist/**' ':signoff/**' 'Makefile' 'utils/**'; then
+            echo "::set-output name=source_modified::false"
+          else
+            echo "Detect changes in architecture and related scripts. Require timing report generation"
+            echo "::set-output name=source_modified::true"
+          fi
+
+  generate_report:
+    name: Timing report generation
+    needs: detect_arch_changes
+    # Triggered when a pull request is a label of 'force_netlist_generation' or on main branch
+    if: needs.detect_arch_changes.outputs.source_modified == 'true' || contains(github.event.pull_request.labels.*.name, 'force_report_timing') || github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64]
+    outputs:
+      # this is output as string, see https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idoutputs
+      golden_modified: ${{ steps.changes.outputs.status_code == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        report_name: ["report_routing_timing", "report_homo_pb_timing", "report_hetero_pb_timing"]
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout_ips
+
+      - name: Setup env
+        run: |
+          cd pdk
+          make link
+
+      - name: Running STA
+        shell: bash
+        run: |
+          cd signoff
+          make ${{ matrix.report_name }}
+
+      - name: Detect changes on golden
+        id: git-diff-golden
+        run: |
+          git diff --name-status -- ':reports/gl/raw/ultimate/**'
+          if git diff --name-status --exit-code -- ':reports/gl/raw/ultimate/**'; then
+            echo "::set-output name=golden_changes::false"
+          else
+            echo "Detect changes in output files. Require double check"
+            echo "::set-output name=golden_changes::true"
+          fi
+
+      - name: Check consistency with golden
+        if: steps.git-diff-golden.outputs.golden_changes == 'true'
+        run: |
+          echo "Golden results are changed. Request further review!"
+          echo "Detailed changes are shown below:"
+          git diff -- ':reports/gl/raw/ultimate/**'
+          exit 1
