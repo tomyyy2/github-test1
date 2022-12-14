@@ -1,0 +1,81 @@
+name: Yosys Pre-Check
+
+# Only run for pull requests as we care contribution to the master
+# - There are changes in Yosys files
+on:
+  pull_request:
+    path:
+      - ".github/**"
+      - "Makefile"
+      - "yosys/**"
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  detect_yosys_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      source_modified: ${{ steps.git-diff-yosys.outputs.source_modified }}
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout code
+        uses: actions/checkout@v2.1.0
+
+      - name: Detect yosys changes
+        id: git-diff-yosys
+        run: |
+          git fetch
+          git diff origin/main HEAD --name-status -- ':.github/**' ':yosys/**' 'Makefile' 
+          if git diff origin/main HEAD --name-status --exit-code -- ':.github/**' ':yosys/**' 'Makefile'; then
+            echo "::set-output name=source_modified::false"
+          else
+            echo "Detect changes in yosys technology library. Require pre-check"
+            echo "::set-output name=source_modified::true"
+          fi
+
+  precheck_yosys_techlib:
+    name: Precheck Yosys Technology Library
+    needs: detect_yosys_changes
+    # Triggered when a pull request is a label of 'force_netlist_generation' or on main branch
+    if: needs.detect_yosys_changes.outputs.source_modified == 'true' || contains(github.event.pull_request.labels.*.name, 'force_yosys_precheck') || github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64]
+    outputs:
+      # this is output as string, see https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idoutputs
+      golden_modified: ${{ steps.changes.outputs.status_code == 'true' }}
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout SUBMODULE=benchmarks/micro_benchmark
+
+      - name: Compile technology library
+        shell: bash
+        run: |
+          cd yosys
+          iverilog cell_sim.v

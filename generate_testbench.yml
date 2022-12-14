@@ -1,0 +1,119 @@
+name: Testbench Generation
+
+# Only run for pull requests as we care contribution to the master
+# - There are changes in RTL files
+on:
+  pull_request:
+    path:
+      - ".github/**"
+      - "arch/**"
+      - "benchmarks/**"
+      - "openfpga_tasks/**"
+      - "Makefile"
+      - "utils/**"
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  detect_arch_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      source_modified: ${{ steps.git-diff-arch.outputs.source_modified }}
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout code
+        uses: actions/checkout@v2.1.0
+
+      - name: Detect architecture/script changes
+        id: git-diff-arch
+        run: |
+          git fetch
+          git diff origin/main HEAD --name-status -- ':.github/**' ':arch/**' ':benchmarks/**' ':openfpga_tasks/**' 'Makefile' 'utils/**'
+          if git diff origin/main HEAD --name-status --exit-code -- ':.github/**' ':arch/**' ':benchmarks/**' ':openfpga_tasks/**' 'Makefile' 'utils/**'; then
+            echo "::set-output name=source_modified::false"
+          else
+            echo "Detect changes in architecture and related scripts. Require testbench generation"
+            echo "::set-output name=source_modified::true"
+          fi
+
+  generate_preconfig_testbench:
+    name: Preconfigured testbench generation
+    needs: detect_arch_changes
+    runs-on: [self-hosted, Linux, X64]
+    # Triggered when a pull request is a label of 'force_bitstream_generation' or on main branch
+    if: needs.detect_arch_changes.outputs.source_modified == 'true' || contains(github.event.pull_request.labels.*.name, 'force_testbench_generation') || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        fabric_name: ["ultimate", "dp"]
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout_benchmarks
+
+      - name: Create benchmark links
+        shell: bash
+        run: |
+          cd benchmarks
+          make all
+
+      - name: Uncompress golden VPR results
+        shell: bash
+        run: |
+          cd reports
+          make uncompress_vpr_log_all_for_fabric FABRIC_NAME=${{ matrix.fabric_name }}
+
+      - name: Running preconfigured testbench generation
+        shell: bash
+        run: |
+          make preconfig_testbench_all_for_fabric FABRIC_NAME=${{ matrix.fabric_name }} OPENFPGA_TASK_OPTIONS="--maxthreads 6"
+
+      - name: Running full testbench generation
+        shell: bash
+        run: |
+          make full_testbench FABRIC_NAME=${{ matrix.fabric_name }} OPENFPGA_TASK_OPTIONS="--maxthreads 6"
+
+      - name: Detect changes on golden
+        id: git-diff-golden
+        run: |
+         git diff --name-status -- ':dv/preconfig_testbench/${{ matrix.fabric_name }}/*/*/*.v :dv/full_testbench/${{ matrix.fabric_name }}/*/*.v'
+         if git diff --name-status --exit-code -- ':dv/preconfig_testbench/${{ matrix.fabric_name }}/*/*/*.v :dv/full_testbench/${{ matrix.fabric_name }}/*/*.v'; then
+           echo "::set-output name=golden_changes::false"
+         else
+           echo "Detect changes in golden testbench files."
+           echo "::set-output name=golden_changes::true"
+         fi
+
+      - name: Check consistency with golden
+        if: steps.git-diff-golden.outputs.golden_changes == 'true'
+        run: |
+          echo "Golden testbenches are changed. Request further review!"
+          echo "Detailed changes are shown below:"
+          git diff -- ':dv/preconfig_testbench/${{ matrix.fabric_name }}/*/*/*.v :dv/full_testbench/${{ matrix.fabric_name }}/*/*.v'
+          exit 1
+

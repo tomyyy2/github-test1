@@ -1,0 +1,106 @@
+name: Gate-level Full Simulation
+
+on:
+# Due to the high runtime of this workflow, consider one auto-run per day and also can be triggered manually
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+# Environment variables
+env:
+  # The HDL simulator to be used
+  SIM: vcs
+  # NUmber of simulation jobs in parallel
+  NUM_JOBS: 4
+
+jobs:
+  full_simulation:
+    name: Full testbench simulation
+    runs-on: [self-hosted, Linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        fabric_name: ["ultimate"]
+    # Extend timeout to 24 hours as the simulation takes long to run
+    timeout-minutes: 1440
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout_dv
+
+      - name: Create benchmark links
+        shell: bash
+        run: |
+          cd benchmarks
+          make all
+
+      - name: Uncompress bitstream
+        shell: bash
+        run: |
+          make uncompress_bitstream_all_for_fabric FABRIC_NAME=${{ matrix.fabric_name }}
+
+      - name: Link PDK
+        shell: bash
+        run: |
+          cd pdk
+          make link
+
+      - name: Run simulation
+        shell: bash
+        run: |
+          cd dv
+          make run_full_sim SIM=$SIM NETLIST_TYPE=gl/restructured FABRIC_NAME=${{ matrix.fabric_name }} BENCHMARK_NAME=and2x112 CLEAN_PREVIOUS_RUN=on
+
+  ccff_test:
+    name: Configuration chain simulation
+    runs-on: [self-hosted, Linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        fabric_name: ["ultimate"]
+    # Extend timeout to 24 hours as the simulation takes long to run
+    timeout-minutes: 1440
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout_dv
+
+      - name: Link PDK
+        shell: bash
+        run: |
+          cd pdk
+          make link
+
+      - name: Run simulation
+        shell: bash
+        run: |
+          cd dv
+          make run_ccff_test FABRIC_NAME=${{ matrix.fabric_name }} NETLIST_PATH=gl/restructured SIM=$SIM CLEAN_PREVIOUS_RUN=on

@@ -1,0 +1,56 @@
+name: Consistency
+
+# Only run for pull requests as we care contribution to the master
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  consistency:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Runner workspace path
+        run: |
+          echo "Cleaning up previous run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout repo
+        uses: actions/checkout@v2.4.0
+
+      - name: Checkout submodule
+        run: |
+          make checkout_essentials
+
+      - name: Arch file consistency
+        shell: bash
+        run: |
+          make check_arch_file
+
+      - name: Yosys script consistency
+        shell: bash
+        run: |
+          make check_yosys_script
+
+      - name: OpenFPGA script consistency
+        shell: bash
+        run: |
+          make check_openfpga_script
+
+# TODO: check consistency on task configuration files between eda team and upstream
+
+      - name: Create symbolic links to PDK files
+        run: |
+          cd pdk
+          make link
+
+# TODO: Check gate-level netlist consistency between pd team and upstream
